@@ -1,0 +1,181 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Elastic Beanstalk and Auto Scaling Challenge Template'
+
+Parameters:
+  VpcId:
+    Description: 'The ID of the existing VPC where the resources will be created.'
+    Type: 'AWS::EC2::VPC::Id'
+  StackName:
+    Description: 'A unique name for the CloudFormation stack.'
+    Type: 'String'
+    MinLength: '1'
+    MaxLength: '255'
+  InstanceType:
+    Description: 'EC2 instance type for the Elastic Beanstalk environment'
+    Type: 'String'
+    Default: 't2.micro'
+    AllowedValues:
+      - 't2.micro'
+      - 't2.small'
+      - 't2.medium'
+  AMIId:
+    Description: 'The ID of the Amazon Machine Image (AMI) to use for EC2 instances.'
+    Type: 'AWS::EC2::Image::Id'
+  SecurityGroup:
+    Description: 'The name of the security group to associate with EC2 instances.'
+    Type: 'String'
+  KeyPair:
+    Description: 'The name of the key pair to use for EC2 instances.'
+    Type: 'AWS::EC2::KeyPair::KeyName'
+  ELBName:
+    Description: 'Name for the Elastic Load Balancer.'
+    Type: 'String'
+  SolutionStackName:
+    Description: 'Elastic Beanstalk solution stack name.'
+    Type: 'String'
+    Default: '64bit Amazon Linux 2 v5.8.6 running Node.js 18'  # Example solution stack for Tokyo (ap-northeast-1)
+  Tags:
+    Description: 'A comma-separated list of tags to apply to the resources created.'
+    Type: 'String'
+    Default: ''
+  SubnetId1:
+    Description: 'The ID of the first subnet for the Elastic Load Balancer.'
+    Type: 'AWS::EC2::Subnet::Id'
+  SubnetId2:
+    Description: 'The ID of the second subnet for the Elastic Load Balancer.'
+    Type: 'AWS::EC2::Subnet::Id'
+  ApplicationName:
+    Description: 'Name of the Elastic Beanstalk application.'
+    Type: 'String'
+
+Resources:
+  ElasticBeanstalkApplication:
+    Type: 'AWS::ElasticBeanstalk::Application'
+    Properties:
+      ApplicationName:
+        Ref: 'ApplicationName'
+
+  ElasticBeanstalkEnvironment:
+    Type: 'AWS::ElasticBeanstalk::Environment'
+    Properties:
+      ApplicationName:
+        Ref: 'ApplicationName'
+      EnvironmentName: 'YourEBEnvironment'
+      SolutionStackName:
+        Ref: 'SolutionStackName'
+      OptionSettings:
+        -
+          Namespace: 'aws:autoscaling:launchconfiguration'
+          OptionName: 'InstanceType'
+          Value:
+            Ref: 'InstanceType'
+      Tags:
+        - Key: 'CustomTag'
+          Value: 'CustomValue'
+
+  ElasticLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancing::LoadBalancer'
+    Properties:
+      Listeners:
+        -
+          LoadBalancerPort: 80
+          InstancePort: 80
+          Protocol: 'HTTP'
+      Subnets:
+        - !Ref SubnetId1
+        - !Ref SubnetId2
+      LoadBalancerName:
+        Ref: 'ELBName'
+      Tags:
+        - Key: 'CustomTag'
+          Value: 'CustomValue'
+
+  LaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      ImageId:
+        Ref: 'AMIId'
+      InstanceType:
+        Ref: 'InstanceType'
+      SecurityGroups:
+        - Ref: 'SecurityGroup'
+      KeyName:
+        Ref: 'KeyPair'
+
+  AutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      AvailabilityZones:
+        Fn::GetAZs:
+          Ref: 'AWS::Region'
+      LaunchConfigurationName:
+        Ref: 'LaunchConfig'
+      MinSize: 2
+      MaxSize: 4
+      Tags:
+        - Key: 'CustomTag'
+          Value: 'YourAutoScalingGroup'
+      MetricsCollection:
+        -
+          Granularity: '1Minute'
+          Metrics:
+            - 'GroupDesiredCapacity'
+      Cooldown: 300 # 5 minutes
+      HealthCheckType: 'ELB'
+      HealthCheckGracePeriod: 300 # 5 minutes
+
+  ScaleOutPolicy:
+    Type: 'AWS::AutoScaling::ScalingPolicy'
+    Properties:
+      AdjustmentType: 'ChangeInCapacity'
+      AutoScalingGroupName:
+        Ref: 'AutoScalingGroup'
+      Cooldown: 300 # 5 minutes
+      ScalingAdjustment: 1
+
+  ScaleInPolicy:
+    Type: 'AWS::AutoScaling::ScalingPolicy'
+    Properties:
+      AdjustmentType: 'ChangeInCapacity'
+      AutoScalingGroupName:
+        Ref: 'AutoScalingGroup'
+      Cooldown: 600 # 10 minutes
+      ScalingAdjustment: -1
+
+  CPUUtilizationAlarmHigh:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Scale out when CPU exceeds 80% for 5 minutes'
+      MetricName: 'CPUUtilization'
+      Namespace: 'AWS/EC2'
+      Statistic: 'Average'
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 80
+      AlarmActions:
+        - Ref: 'ScaleOutPolicy'
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold'
+      Dimensions:
+        -
+          Name: 'AutoScalingGroupName'
+          Value:
+            Ref: 'AutoScalingGroup'
+
+  CPUUtilizationAlarmLow:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Scale in when CPU is below 30% for 10 minutes'
+      MetricName: 'CPUUtilization'
+      Namespace: 'AWS/EC2'
+      Statistic: 'Average'
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 30
+      AlarmActions:
+        - Ref: 'ScaleInPolicy'
+      ComparisonOperator: 'LessThanOrEqualToThreshold'
+      Dimensions:
+        -
+          Name: 'AutoScalingGroupName'
+          Value:
+            Ref: 'AutoScalingGroup'
