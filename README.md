@@ -1,5 +1,10 @@
 ![image](https://github.com/blokesh3786/ecltask/assets/148072376/cd93bf98-bc76-4c50-a443-7e8bc2571aea)
 
+![image](https://github.com/blokesh3786/ecltask/assets/148072376/e615e071-c1db-4b2a-afb1-64599ac59e5e)
+![image](https://github.com/blokesh3786/ecltask/assets/148072376/47ef7451-5111-4204-ba59-e6e9585d676b)
+
+
+NOTE:  use N.VIRGINA(us-east-1)
 AWS CloudFormation Template README
 What This Template Does
 This CloudFormation template is designed to help you set up an Elastic Beanstalk environment in AWS with built-in auto-scaling capabilities. It creates an Elastic Beanstalk application, an Elastic Load Balancer, and an Auto Scaling group. The Auto Scaling group automatically adjusts the number of instances based on CPU utilization to ensure optimal performance.
