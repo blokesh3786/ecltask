@@ -3,8 +3,9 @@ Description: 'Elastic Beanstalk and Auto Scaling Challenge Template'
 
 Parameters:
   VpcId:
-    Description: 'The ID of the existing VPC where the resources will be created.'
+    Description: 'The ID of the existing VPC where the resources will be created. Leave empty to create a new VPC.'
     Type: 'AWS::EC2::VPC::Id'
+    Default: ''
   StackName:
     Description: 'A unique name for the CloudFormation stack.'
     Type: 'String'
@@ -21,9 +22,11 @@ Parameters:
   AMIId:
     Description: 'The ID of the Amazon Machine Image (AMI) to use for EC2 instances.'
     Type: 'AWS::EC2::Image::Id'
+    Default: 'ami-0bcc476f0af20424e'  # Default AMI ID
   SecurityGroup:
     Description: 'The name of the security group to associate with EC2 instances.'
     Type: 'String'
+    Default: 'default'  # Default security group
   KeyPair:
     Description: 'The name of the key pair to use for EC2 instances.'
     Type: 'AWS::EC2::KeyPair::KeyName'
@@ -33,45 +36,51 @@ Parameters:
   SolutionStackName:
     Description: 'Elastic Beanstalk solution stack name.'
     Type: 'String'
-    Default: '64bit Amazon Linux 2 v5.8.6 running Node.js 18'  # Example solution stack for Tokyo (ap-northeast-1)
+    Default: '64bit Amazon Linux 2 v5.8.6 running Node.js 18'
   Tags:
     Description: 'A comma-separated list of tags to apply to the resources created.'
     Type: 'String'
     Default: ''
   SubnetId1:
-    Description: 'The ID of the first subnet for the Elastic Load Balancer.'
+    Description: 'The ID of the first subnet for the Elastic Load Balancer. Leave empty to create a new subnet.'
     Type: 'AWS::EC2::Subnet::Id'
+    Default: ''
   SubnetId2:
-    Description: 'The ID of the second subnet for the Elastic Load Balancer.'
+    Description: 'The ID of the second subnet for EC2 instances. Leave empty to create a new subnet.'
     Type: 'AWS::EC2::Subnet::Id'
+    Default: ''
   ApplicationName:
     Description: 'Name of the Elastic Beanstalk application.'
     Type: 'String'
+    Default: 'ecl3'  # Default application name
 
 Resources:
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Condition: CreateNewVPC
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+
+  Subnet1:
+    Type: 'AWS::EC2::Subnet'
+    Condition: CreateNewSubnet1
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.0.0/24'
+      AvailabilityZone: 'us-east-1a'
+
+  Subnet2:
+    Type: 'AWS::EC2::Subnet'
+    Condition: CreateNewSubnet2
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.1.0/24'
+      AvailabilityZone: 'us-east-1b'
+
   ElasticBeanstalkApplication:
     Type: 'AWS::ElasticBeanstalk::Application'
     Properties:
-      ApplicationName:
-        Ref: 'ApplicationName'
-
-  ElasticBeanstalkEnvironment:
-    Type: 'AWS::ElasticBeanstalk::Environment'
-    Properties:
-      ApplicationName:
-        Ref: 'ApplicationName'
-      EnvironmentName: 'YourEBEnvironment'
-      SolutionStackName:
-        Ref: 'SolutionStackName'
-      OptionSettings:
-        -
-          Namespace: 'aws:autoscaling:launchconfiguration'
-          OptionName: 'InstanceType'
-          Value:
-            Ref: 'InstanceType'
-      Tags:
-        - Key: 'CustomTag'
-          Value: 'CustomValue'
+      ApplicationName: !Ref ApplicationName
 
   ElasticLoadBalancer:
     Type: 'AWS::ElasticLoadBalancing::LoadBalancer'
@@ -82,10 +91,9 @@ Resources:
           InstancePort: 80
           Protocol: 'HTTP'
       Subnets:
-        - !Ref SubnetId1
-        - !Ref SubnetId2
-      LoadBalancerName:
-        Ref: 'ELBName'
+        - !If [CreateNewSubnet1, !Ref Subnet1, !Ref SubnetId1]
+        - !If [CreateNewSubnet2, !Ref Subnet2, !Ref SubnetId2]
+      LoadBalancerName: !Ref ELBName
       Tags:
         - Key: 'CustomTag'
           Value: 'CustomValue'
@@ -93,14 +101,11 @@ Resources:
   LaunchConfig:
     Type: 'AWS::AutoScaling::LaunchConfiguration'
     Properties:
-      ImageId:
-        Ref: 'AMIId'
-      InstanceType:
-        Ref: 'InstanceType'
+      ImageId: !Ref AMIId
+      InstanceType: !Ref InstanceType
       SecurityGroups:
-        - Ref: 'SecurityGroup'
-      KeyName:
-        Ref: 'KeyPair'
+        - !Ref SecurityGroup
+      KeyName: !Ref KeyPair
 
   AutoScalingGroup:
     Type: 'AWS::AutoScaling::AutoScalingGroup'
@@ -108,13 +113,13 @@ Resources:
       AvailabilityZones:
         Fn::GetAZs:
           Ref: 'AWS::Region'
-      LaunchConfigurationName:
-        Ref: 'LaunchConfig'
+      LaunchConfigurationName: !Ref LaunchConfig
       MinSize: 2
       MaxSize: 4
       Tags:
         - Key: 'CustomTag'
           Value: 'YourAutoScalingGroup'
+          PropagateAtLaunch: true
       MetricsCollection:
         -
           Granularity: '1Minute'
@@ -128,8 +133,7 @@ Resources:
     Type: 'AWS::AutoScaling::ScalingPolicy'
     Properties:
       AdjustmentType: 'ChangeInCapacity'
-      AutoScalingGroupName:
-        Ref: 'AutoScalingGroup'
+      AutoScalingGroupName: !Ref AutoScalingGroup
       Cooldown: 300 # 5 minutes
       ScalingAdjustment: 1
 
@@ -137,8 +141,7 @@ Resources:
     Type: 'AWS::AutoScaling::ScalingPolicy'
     Properties:
       AdjustmentType: 'ChangeInCapacity'
-      AutoScalingGroupName:
-        Ref: 'AutoScalingGroup'
+      AutoScalingGroupName: !Ref AutoScalingGroup
       Cooldown: 600 # 10 minutes
       ScalingAdjustment: -1
 
@@ -153,13 +156,12 @@ Resources:
       EvaluationPeriods: 1
       Threshold: 80
       AlarmActions:
-        - Ref: 'ScaleOutPolicy'
+        - !Ref ScaleOutPolicy
       ComparisonOperator: 'GreaterThanOrEqualToThreshold'
       Dimensions:
         -
           Name: 'AutoScalingGroupName'
-          Value:
-            Ref: 'AutoScalingGroup'
+          Value: !Ref AutoScalingGroup
 
   CPUUtilizationAlarmLow:
     Type: 'AWS::CloudWatch::Alarm'
@@ -172,10 +174,14 @@ Resources:
       EvaluationPeriods: 2
       Threshold: 30
       AlarmActions:
-        - Ref: 'ScaleInPolicy'
+        - !Ref ScaleInPolicy
       ComparisonOperator: 'LessThanOrEqualToThreshold'
       Dimensions:
         -
           Name: 'AutoScalingGroupName'
-          Value:
-            Ref: 'AutoScalingGroup'
+          Value: !Ref AutoScalingGroup
+
+Conditions:
+  CreateNewVPC: !Equals [!Ref VpcId, '']
+  CreateNewSubnet1: !Equals [!Ref SubnetId1, '']
+  CreateNewSubnet2: !Equals [!Ref SubnetId2, '']
